@@ -6,7 +6,7 @@ Create a centralized database instance using `createDbClient`:
 
 ```typescript
 // src/config/database.ts
-import { createDbClient } from '@mysql-craft';
+import { createDbClient } from 'mysql-craft';
 
 export const db = createDbClient({
   host: process.env.DB_HOST || 'localhost',
@@ -51,7 +51,7 @@ const admins = await db.query<User>(
 // src/controllers/AccountController.ts
 import type { Request, Response, NextFunction } from 'express';
 import { db } from '../config/database';
-import { Security, ValidationError, AuthError } from '@mysql-craft';
+import { Security, ValidationError, AuthError } from 'mysql-craft';
 
 export class AccountController {
   // Safe, transactional registration

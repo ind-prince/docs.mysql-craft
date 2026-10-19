@@ -1,9 +1,9 @@
 ## 🔐 Security & Authentication Module
 
-Cleanly exported from `@mysql-craft/security` (or root):
+Cleanly exported from `mysql-craft/security` (or root):
 
 ```typescript
-import { Security } from '@mysql-craft';
+import { Security } from 'mysql-craft';
 ```
 
 ### 1. Password Hashing (Bcrypt)

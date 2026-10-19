@@ -6,7 +6,7 @@ Stop writing repetitive controllers, services, and queries for every relational 
 
 ```typescript
 import express from 'express';
-import { createDbClient, Security } from '@mysql-craft';
+import { createDbClient, Security } from 'mysql-craft';
 
 const app = express();
 app.use(express.json());

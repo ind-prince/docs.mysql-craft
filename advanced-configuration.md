@@ -1,4 +1,4 @@
-## On this page
+## Contents
 
 - [Atomic Transactions with Deadlock Retries](#transactions)
 - [Express Middleware Suite](#express-middleware)
@@ -75,7 +75,7 @@ await db.transaction(async (trx) => {
 
 ## 🔌 Express Middleware Suite
 
-Imported from `@mysql-craft/middleware` or root:
+Imported from `mysql-craft/middleware` or root:
 
 ```typescript
 import {
@@ -83,7 +83,7 @@ import {
   requireRole,
   validateBody,
   errorMiddleware
-} from '@mysql-craft';
+} from 'mysql-craft';
 ```
 
 ### 1. JWT Authentication Middleware
@@ -148,7 +148,7 @@ app.post(
 Standardizes all application errors into a predictable JSON API structure:
 
 ```typescript
-import { errorMiddleware } from '@mysql-craft';
+import { errorMiddleware } from 'mysql-craft';
 
 // Register at the end of your Express middleware stack
 app.use(errorMiddleware);
@@ -256,19 +256,19 @@ Import only the modules you need with clean subpath imports:
 
 ```typescript
 // Root import (everything)
-import { createDbClient, Security } from '@mysql-craft';
+import { createDbClient, Security } from 'mysql-craft';
 
 // Core database client & query builders
-import { Database, BaseClient, escapeIdentifier } from '@mysql-craft/core';
+import { Database, BaseClient, escapeIdentifier } from 'mysql-craft/core';
 
 // Security & auth module
-import { Security } from '@mysql-craft/security';
+import { Security } from 'mysql-craft/security';
 
 // Express middleware
-import { authenticateJwt, requireRole, errorMiddleware } from '@mysql-craft/middleware';
+import { authenticateJwt, requireRole, errorMiddleware } from 'mysql-craft/middleware';
 
 // Operational errors
-import { DatabaseError, PoolExhaustedError, ValidationError, AuthError } from '@mysql-craft/errors';
+import { DatabaseError, PoolExhaustedError, ValidationError, AuthError } from 'mysql-craft/errors';
 ```
 
 ---

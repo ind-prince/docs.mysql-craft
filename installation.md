@@ -4,16 +4,16 @@ Install the package alongside the required `mysql2` driver:
 
 ```bash
 # Using npm
-npm install @mysql-craft mysql2
+npm install mysql-craft mysql2
 
 # # Using pnpm
-# pnpm add @mysql-craft mysql2
+# pnpm add mysql-craft mysql2
 
 # # Using yarn
-# yarn add @mysql-craft mysql2
+# yarn add mysql-craft mysql2
 
 # # Using bun
-# bun add @mysql-craft mysql2
+# bun add mysql-craft mysql2
 ```
 
 ### Peer Dependencies
