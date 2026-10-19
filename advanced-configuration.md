@@ -331,7 +331,7 @@ Contributions are welcome! Please follow these steps:
 
 ## 📜 License
 
-Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for details.
+Distributed under the **MIT License**. See [`LICENSE`](/advanced-configuration#license) for details.
 
 <!-- Developed with ❤️ by the **Principal Node.js Architecture Team**. -->
 <p align="center">
