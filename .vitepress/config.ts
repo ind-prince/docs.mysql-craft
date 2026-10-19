@@ -25,6 +25,7 @@ export default defineConfig({
         items: [
           { text: 'CRUD Engine', link: '/crud-engine' },
           { text: 'API Reference', link: '/api-reference' },
+          { text: 'Advanced Configuration', link: '/advanced-configuration' },
         ],
       },
       {
