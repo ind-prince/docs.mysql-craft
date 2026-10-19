@@ -2,7 +2,7 @@ name: Deploy VitePress site to Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main] # 👈 Restricted exclusively to the main branch
 
 permissions:
   contents: read
@@ -38,7 +38,7 @@ jobs:
         run: npm install --legacy-peer-deps
 
       - name: Build VitePress Site
-        run: npm run build
+        run: npm run docs:build # 👈 Triggers your exact production bundle task
 
       - name: Upload Build Artifacts
         uses: actions/upload-pages-artifact@v3
