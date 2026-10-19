@@ -1,0 +1,17 @@
+{
+  "name": "docs.mysql-craft",
+  "version": "1.0.0",
+  "description": "Documentation source code for @mysql-craft—the modern, high-velocity MySQL engine for Node.js & TypeScript. Powered by VitePress.",
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "keywords": [],
+  "author": "Prince Kumar",
+  "license": "MIT",
+  "devDependencies": {
+    "vitepress": "^1.6.4"
+  }
+}
