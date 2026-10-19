@@ -25,6 +25,7 @@ export default defineConfig({
         items: [
           { text: 'CRUD Engine', link: '/crud-engine' },
           { text: 'API Reference', link: '/api-reference' },
+          { text: 'Advanced Configuration', link: '/advanced-configuration' },
         ],
       },
       {
@@ -38,7 +39,7 @@ export default defineConfig({
     ],
     socialLinks: [
       { icon: 'github', link: 'https://github.com/ind-prince/mysql-craft' },
-      { icon: 'npm', link: 'https://www.npmjs.com/package/@mysql-craft' },
+      { icon: 'npm', link: 'https://www.npmjs.com/package/mysql-craft' },
     ],
     footer: {
       message: 'Released under the MIT License.',

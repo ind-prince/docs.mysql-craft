@@ -112,7 +112,7 @@ const totalAdmins = await db.count({
 
 ## 🔨 Pure SQL Builders & Sanitizers
 
-Exported from `@mysql-craft/core`:
+Exported from `mysql-craft/core`:
 
 ```typescript
 import {
@@ -123,7 +123,7 @@ import {
   buildDeleteQuery,
   buildCountQuery,
   parseQueryParams
-} from '@mysql-craft';
+} from 'mysql-craft';
 ```
 
 ### Identifier Escaping
