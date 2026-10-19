@@ -1,48 +1,17 @@
-## 📑 Table of Contents
+## On this page
 
-- [Why @mysql-craft?](#-why-archmysql-craft)
-- [Architectural Comparison](#-architectural-comparison)
-- [Installation](#-installation)
-- [Quick Start Guide](#-quick-start-guide)
-- [Instant CRUD Resource Engine (1-Line REST API)](#-instant-crud-resource-engine-1-line-rest-api)
-  - [Basic Setup](#basic-resource-router-setup)
-  - [Query Parameter Capabilities](#query-parameter-capabilities)
-  - [Lifecycle Hooks](#lifecycle-hooks)
-  - [Resource Configuration Options](#resource-configuration-options)
-- [Core Database & Query API](#-core-database--query-api)
-  - [Parameterized Queries (`query`, `queryOne`)](#1-parameterized-queries-query-queryone)
-  - [Mutations (`execute`, `insert`, `update`, `delete`)](#2-high-level-mutations-insert-update-delete)
-  - [Structured Select & Count (`select`, `count`)](#3-structured-query-builders-select-count)
-  - [Database Methods Reference Table](#database-methods-reference-table)
-- [Atomic Transactions with Deadlock Retries](#-atomic-transactions-with-deadlock-retries)
-- [Security & Authentication Module](#-security--authentication-module)
-  - [Bcrypt Password Hashing](#1-password-hashing-bcrypt)
-  - [JWT Token Management & Rotation](#2-jwt-token-management--rotation)
-  - [User Record Sanitization](#3-user-record-sanitization)
-  - [Cryptographic Token Generator](#4-cryptographic-token-generation)
-- [Express Middleware Suite](#-express-middleware-suite)
-  - [JWT Authentication Middleware](#1-jwt-authentication-middleware)
-  - [Role-Based Access Control (RBAC)](#2-role-based-access-control-rbac)
-  - [Lightweight Body Validator](#3-request-body-validation)
-  - [Centralized Error Middleware](#4-centralized-error-middleware)
-- [Resilience, Pool Management & Health Checks](#-resilience-pool-management--health-checks)
-  - [Bounded Pool Queue & Fail-Fast HTTP 503](#bounded-connection-pooling--fail-fast-503)
-  - [Exponential Backoff with Full Jitter](#exponential-backoff-with-full-jitter)
-  - [Kubernetes Liveness, Readiness & Health Checks](#kubernetes-liveness-readiness--health-checks)
-  - [Graceful Shutdown (Drain)](#graceful-shutdown-drain)
-- [Visual Diagnostics, Masking & Instrumentation](#-visual-diagnostics-masking--instrumentation)
-  - [Colorized SQL Terminal Logger](#colorized-sql-terminal-logger)
-  - [Automatic Credential Masking](#automatic-credential-masking)
-  - [APM & Telemetry Hooks (Prometheus, Datadog, OpenTelemetry)](#custom-telemetry--apm-integration)
-- [Pure SQL Builders & Sanitizers](#-pure-sql-builders--sanitizers)
-- [Error Hierarchy & HTTP Status Mapping](#-error-hierarchy--http-status-mapping)
-- [TypeScript Integration & Type Safety](#-typescript-integration--type-safety)
-- [Package Subpath Exports](#-package-subpath-exports)
-- [Configuration Reference](#-configuration-reference)
-- [Contributing & Development](#-contributing--development)
-- [License](#-license)
+- [Atomic Transactions with Deadlock Retries](#transactions)
+- [Express Middleware Suite](#express-middleware)
+- [Error Hierarchy & HTTP Status Mapping](#error-hierarchy)
+- [TypeScript Integration & Type Safety](#typescript-integration)
+- [Package Subpath Exports](#package-exports)
+- [Configuration Reference](#configuration-reference)
+- [Contributing & Development](#contributing)
+- [License](#license)
 
 ---
+
+<a id="transactions"></a>
 
 ## 🔄 Atomic Transactions with Deadlock Retries
 
@@ -101,6 +70,8 @@ await db.transaction(async (trx) => {
 ```
 
 ---
+
+<a id="express-middleware"></a>
 
 ## 🔌 Express Middleware Suite
 
@@ -200,6 +171,8 @@ Standardized JSON output:
 
 ---
 
+<a id="error-hierarchy"></a>
+
 ## 🚨 Error Hierarchy & HTTP Status Mapping
 
 All errors inherit from the abstract `AppError` class and feature `isOperational: true`, allowing centralized error handlers to distinguish trusted operational errors from unknown programming bugs.
@@ -224,6 +197,8 @@ AppError (abstract)
 | `ValidationError` | `400` | `VALIDATION_ERROR` | Request payload or parameter validation failure. |
 
 ---
+
+<a id="typescript-integration"></a>
 
 ## 🦾 TypeScript Integration & Type Safety
 
@@ -273,6 +248,8 @@ declare global {
 
 ---
 
+<a id="package-exports"></a>
+
 ## 📦 Package Subpath Exports
 
 Import only the modules you need with clean subpath imports:
@@ -296,6 +273,8 @@ import { DatabaseError, PoolExhaustedError, ValidationError, AuthError } from '@
 
 ---
 
+<a id="configuration-reference"></a>
+
 ## ⚙️ Configuration Reference
 
 ### `DatabaseConfig` (extends `mysql2.PoolOptions`)
@@ -317,6 +296,8 @@ import { DatabaseError, PoolExhaustedError, ValidationError, AuthError } from '@
 | `instrumentation` | `Instrumentation \| Instrumentation[]` | `[]` | APM and logging event listeners. |
 
 ---
+
+<a id="contributing"></a>
 
 ## 🧪 Contributing & Development
 
@@ -345,6 +326,8 @@ Contributions are welcome! Please follow these steps:
    ```
 
 ---
+
+<a id="license"></a>
 
 ## 📜 License
 
