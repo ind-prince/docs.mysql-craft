@@ -11,15 +11,14 @@ npm install mysql-craft
 Use a TypeScript version compatible with your application. The package includes
 generated TypeScript declarations when it is built and published.
 
-## Express resource router and middleware
+# Using pnpm
+pnpm add mysql-craft mysql2
 
-Express is not a runtime dependency or a peer dependency of `mysql-craft`.
-Install it in applications that use `createResourceRouter` or the Express
-middleware. Add the Express type definitions too when compiling TypeScript:
+# Using yarn
+yarn add mysql-craft mysql2
 
-```bash
-npm install express
-npm install --save-dev @types/express
+# Using bun
+bun add mysql-craft mysql2
 ```
 
 If Express is missing, importing the package still works, but creating a
