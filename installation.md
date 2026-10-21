@@ -4,22 +4,33 @@
 `jsonwebtoken`, and `picocolors` as runtime dependencies, so you do not need to
 install `mysql2` separately for the normal database API.
 
-```bash
+Choose your package manager:
+
+::: code-group
+
+```bash [npm]
 npm install mysql-craft
 ```
 
+```bash [pnpm]
+pnpm add mysql-craft
+```
+
+```bash [yarn]
+yarn add mysql-craft
+```
+
+```bash [bun]
+bun add mysql-craft
+```
+
+:::
+
+You do not need to install `mysql2` separately; it is a runtime dependency of
+`mysql-craft`.
+
 Use a TypeScript version compatible with your application. The package includes
 generated TypeScript declarations when it is built and published.
-
-# Using pnpm
-pnpm add mysql-craft mysql2
-
-# Using yarn
-yarn add mysql-craft mysql2
-
-# Using bun
-bun add mysql-craft mysql2
-```
 
 If Express is missing, importing the package still works, but creating a
 resource router requires Express. There is also a current ESM limitation:
