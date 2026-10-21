@@ -1,176 +1,261 @@
-## ⚡ Instant CRUD Resource Engine (1-Line REST API)
+# Express resource router
 
-Stop writing repetitive controllers, services, and queries for every relational table. With **`db.createResourceRouter()`**, you generate an enterprise-grade, hardened Express router in **a single line of code**.
+`createResourceRouter()` builds a router for one database table. It provides
+basic list, detail, create, update, and delete routes. Use it when the table
+maps cleanly to an API resource; use your own controller when the API needs
+multi-table workflows or application-specific authorization.
 
-### Basic Resource Router Setup
+Install Express in your application first:
+
+```bash
+npm install express
+npm install --save-dev @types/express
+```
+
+## Mount a router
+
+This example exposes customer records while keeping password hashes out of
+responses. The explicit allowlists matter: they limit the data clients can
+read, search, sort, filter, and write.
 
 ```typescript
+import { createRequire } from 'node:module';
 import express from 'express';
-import { createDbClient, Security } from 'mysql-craft';
+
+const require = createRequire(import.meta.url);
+const { createDbClient } = require('mysql-craft') as typeof import('mysql-craft');
 
 const app = express();
 app.use(express.json());
 
-const db = createDbClient({ /* db config */ });
+const db = createDbClient({
+  host: process.env.DB_HOST ?? 'localhost',
+  user: process.env.DB_USER ?? 'shop_app',
+  password: process.env.DB_PASSWORD ?? '',
+  database: process.env.DB_NAME ?? 'shop'
+});
 
-// Mount a full CRUD REST API for table "account" under /api/accounts
-app.use('/api/accounts', db.createResourceRouter('account', {
-  primaryKey: 'iduser',
-  allowedFields: ['iduser', 'email', 'first_name', 'last_name', 'role', 'created_at'],
-  readOnlyFields: ['iduser', 'created_at'], // Clients cannot inject/override these on POST/PUT
-  hiddenFields: ['password_hash'],           // Stripped from all HTTP responses
-  searchableFields: ['email', 'first_name', 'last_name'], // Enabled for ?search=
-  defaultLimit: 20,
-  maxLimit: 100,
-  auth: { secret: process.env.JWT_ACCESS_SECRET! }, // Enforces Bearer JWT
-  hooks: {
-    beforeCreate: async (data) => {
-      if (data.password) {
-        data.password_hash = await Security.hashPassword(data.password);
-        delete data.password;
+app.use(
+  '/api/customers',
+  db.createResourceRouter('customers', {
+    primaryKey: 'id',
+    allowedFields: ['id', 'email', 'first_name', 'last_name', 'created_at'],
+    readOnlyFields: ['id', 'created_at'],
+    hiddenFields: ['password_hash'],
+    searchableFields: ['email', 'first_name', 'last_name'],
+    defaultLimit: 25,
+    maxLimit: 100,
+    hooks: {
+      beforeCreate: async (data, req) => {
+        data.signup_ip = req.ip;
+        return data;
       }
-      return data;
     }
-  }
-}));
+  })
+);
 
-app.listen(3000, () => console.log('API listening on http://localhost:3000'));
+app.listen(3000);
 ```
 
-### Endpoints Generated Automatically
+The CommonJS package entry is used here because the current ESM build's lazy
+Express loader calls `require()` from an ESM module. In Node.js that `require`
+is undefined, so `createResourceRouter()` fails with its “express package is
+required” message even when Express is installed. The `createRequire()` bridge
+above loads the CommonJS entry and lets the router resolve Express. Other
+database APIs can still use normal ESM imports. This is a library limitation,
+not an Express configuration problem.
 
-| Method | Endpoint | Description | Status Codes |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/` | Paginated listing with filtering, sorting, field selection, and search | `200 OK` |
-| `GET` | `/:id` | Fetch single record by primary key | `200 OK`, `404 Not Found` |
-| `POST` | `/` | Create new record (strips read-only fields & executes lifecycle hooks) | `201 Created`, `400 Bad Request` |
-| `PUT` | `/:id` | Full update of existing record | `200 OK`, `404 Not Found`, `400 Bad Request` |
-| `PATCH`| `/:id` | Partial update of existing record | `200 OK`, `404 Not Found`, `400 Bad Request` |
-| `DELETE`| `/:id` | Remove record by primary key | `200 OK`, `404 Not Found` |
+The `beforeCreate` hook runs after the router filters client fields, so it can
+add trusted server-side values such as the request IP. For registration, prefer
+a custom route that validates the password separately, hashes it, and passes
+only the hash to the database. `hiddenFields` only removes response properties;
+it is not an input filter.
 
----
+## Routes and responses
 
-### Query Parameter Capabilities
+Mounting the router at `/api/customers` creates the following routes:
 
-The generated `GET /` endpoint inspects the URL query string and dynamically compiles safe, pure parameterized SQL queries:
+| Method | Path | Behavior | Typical response |
+| --- | --- | --- | --- |
+| `GET` | `/api/customers` | Paginated list with filters, sort, projection, and search | `200` with `data` and `meta` |
+| `GET` | `/api/customers/:id` | Fetch one row by the configured primary key | `200`, or `404` |
+| `POST` | `/api/customers` | Insert one row after removing read-only/disallowed fields | `201` |
+| `PUT` | `/api/customers/:id` | Update writable fields on an existing row | `200`, or `404` |
+| `PATCH` | `/api/customers/:id` | Update writable fields on an existing row | `200`, or `404` |
+| `DELETE` | `/api/customers/:id` | Delete an existing row | `200`, or `404` |
 
-#### 1. Pagination (`?page=` & `?limit=`)
-```http
-GET /api/accounts?page=2&limit=25
-```
-Automatically generates `LIMIT 25 OFFSET 25` and executes an associated `COUNT(*)` query, returning standardized pagination metadata:
+`PUT` and `PATCH` currently use the same handler. Both perform a partial update;
+`PUT` does not replace the whole resource. Create and update requests with no
+writable fields are passed to Express as a `ValidationError`. The router itself
+does not parse JSON, so install `express.json()` before mounting it.
+
+The list response has the following shape:
+
 ```json
 {
   "success": true,
-  "data": [ /* 25 account items */ ],
+  "data": [
+    {
+      "id": 42,
+      "email": "maya@example.com",
+      "first_name": "Maya",
+      "last_name": "Chen"
+    }
+  ],
   "meta": {
-    "total": 100,
+    "total": 63,
     "page": 2,
     "limit": 25,
-    "totalPages": 4,
+    "totalPages": 3,
     "hasNext": true,
     "hasPrev": true
   }
 }
 ```
 
-#### 2. Safe Sorting (`?sort=`)
-Supports comma-separated column definitions with explicit `:asc`/`:desc` directives or minus-prefix notation. All columns are strictly validated against `allowedFields`:
+Hidden fields are stripped from list, detail, and create/update response records.
+Delete returns `{ "success": true, "message": "..." }`. Not-found responses have
+`success: false` and an `error` object with `code: "NOT_FOUND"` and a message.
+
+## Pagination, search, sorting, and filters
+
+Page numbers start at 1. The default limit is 20 and the default maximum is 100.
+Non-positive or non-numeric page and limit values fall back to their defaults;
+larger limits are capped. The offset is `(page - 1) * limit`.
+
 ```http
-GET /api/accounts?sort=created_at:desc,first_name:asc
-GET /api/accounts?sort=-created_at,first_name
+GET /api/customers?page=2&limit=25
 ```
 
-#### 3. Field Projection (`?fields=`)
-Allows clients to request only a subset of columns, minimizing bandwidth:
+If `defaultLimit: 25` is configured, omitting `limit` returns up to 25 rows.
+The response includes the total number of rows matching the same filters and
+search. Count and list are separate queries, so concurrent writes can make
+their results reflect slightly different database moments.
+
+Search uses `LIKE` with a `%term%` pattern for each configured searchable
+column:
+
 ```http
-GET /api/accounts?fields=iduser,email,role
+GET /api/customers?search=maya
 ```
-*Compiles to: `SELECT \`iduser\`, \`email\`, \`role\` FROM \`account\` ...`*
 
-#### 4. Multi-Column Search (`?search=`)
-Performs a parameterized `LIKE %term%` across all columns registered in `searchableFields`:
+Sorting accepts a comma-separated `column:direction` list or a minus prefix:
+
 ```http
-GET /api/accounts?search=alex
+GET /api/customers?sort=created_at:desc,first_name:asc
+GET /api/customers?sort=-created_at,first_name
 ```
-*Compiles to: `WHERE (\`email\` LIKE ? OR \`first_name\` LIKE ? OR \`last_name\` LIKE ?)` with bound params `['%alex%', '%alex%', '%alex%']`.*
 
-#### 5. Exact Column Filters
-Any query parameter matching an allowed column acts as an exact equality filter (reserved parameters `page`, `limit`, `sort`, `fields`, and `search` are automatically segregated):
+Only `asc` and `desc` have meaning in the direction position; other values
+become ascending. If no `sort` parameter is supplied, `defaultSort` is used. The
+default is `<primaryKey>:asc`.
+
+`fields` selects a comma-separated projection, and other query parameters become
+exact-match filters:
+
 ```http
-GET /api/accounts?role=admin&status=active
+GET /api/customers?fields=id,email,first_name&status=active
 ```
-*Compiles to: `WHERE \`role\` = ? AND \`status\` = ?`.*
 
----
+The reserved query parameter names are `page`, `limit`, `sort`, `fields`, and
+`search`. An `allowedFields` list is used to filter requested projection,
+sorting, filters, and writable payload fields. When no allowlist is provided,
+the router accepts any valid identifier as a filter or sort column, so define
+one for public endpoints. Search fields are separately controlled by
+`searchableFields`.
 
-### Lifecycle Hooks
+If a requested `fields` list contains no allowed fields, the parser falls back
+to no projection (SQL `*`), not an empty result. `hiddenFields` are still
+stripped from the response, but this behavior is not a substitute for a
+well-designed allowlist.
 
-Intercept and mutate payloads or trigger side-effects (auditing, email notifications, password hashing) during the CRUD lifecycle:
+## Authentication and roles
+
+You can apply authentication to every route in the resource router. With
+`auth: true`, it reads `JWT_SECRET` or `JWT_ACCESS_SECRET` from the environment.
+For an explicit secret, pass `ExpressAuthOptions`:
 
 ```typescript
-const router = db.createResourceRouter('account', {
+app.use(
+  '/api/customers',
+  db.createResourceRouter('customers', {
+    primaryKey: 'id',
+    allowedFields: ['id', 'email', 'first_name', 'last_name'],
+    auth: { secret: process.env.JWT_ACCESS_SECRET! },
+    requireRoles: ['support', 'admin']
+  })
+);
+```
+
+`requireRoles` reads `req.user.role`; pair it with authentication or another
+middleware that sets `req.user`. A custom Express `RequestHandler` can be passed
+as `auth` when the application uses a different authentication scheme. The
+router does not implement resource-level ownership checks. Add custom
+authorization when a user should only access particular rows.
+
+## Lifecycle hooks
+
+Hooks receive the Express request and run around the corresponding database
+operation. A `beforeCreate` or `beforeUpdate` hook can return replacement data,
+or mutate and return the supplied object. An `afterCreate`, `afterUpdate`, or
+`afterDelete` hook runs after the database operation. Errors are passed to
+Express error handling.
+
+```typescript
+const customerRouter = db.createResourceRouter('customers', {
+  primaryKey: 'id',
+  allowedFields: ['id', 'email', 'first_name', 'last_name', 'created_at'],
+  readOnlyFields: ['id', 'created_at'],
+  hiddenFields: ['password_hash'],
   hooks: {
-    // Modify or validate payload before writing to the database
     beforeCreate: async (data, req) => {
-      data.created_by_ip = req.ip;
-      if (data.password) {
-        data.password_hash = await Security.hashPassword(data.password);
-        delete data.password;
-      }
+      data.signup_ip = req.ip;
       return data;
     },
-
-    // Trigger asynchronous side effects after database commit
-    afterCreate: async (createdRecord, req) => {
-      await emailService.sendWelcome(createdRecord.email);
+    afterCreate: async (created, req) => {
+      await auditLog.record('customer.created', {
+        customerId: created.id,
+        requestId: req.get('x-request-id')
+      });
     },
-
-    // Intercept updates
-    beforeUpdate: async (id, data, req) => {
+    beforeUpdate: async (id, data) => {
       data.updated_at = new Date();
       return data;
     },
-
-    // Audit logging after update
-    afterUpdate: async (updatedRecord, req) => {
-      auditLogger.info(`User ${updatedRecord.iduser} updated by ${req.user?.sub}`);
-    },
-
-    // Verify constraints before deletion
-    beforeDelete: async (id, req) => {
-      const orderCount = await db.count({ table: 'orders', where: { user_id: id } });
-      if (orderCount > 0) {
-        throw new ValidationError('Cannot delete user with active orders.');
+    beforeDelete: async (id) => {
+      const activeOrders = await db.count({
+        table: 'orders',
+        where: { customer_id: id, status: 'open' }
+      });
+      if (activeOrders > 0) {
+        throw new Error('Close this customer’s open orders before deleting the account.');
       }
-    },
-
-    // Clean up associated resources after deletion
-    afterDelete: async (id, req) => {
-      await s3Client.deleteFolder(`avatars/${id}`);
     }
   }
 });
 ```
 
----
+Hooks are not wrapped in a transaction. For example, an `afterCreate` error is
+reported after the row has already been inserted. Use an explicit
+`db.transaction()` in a custom controller when several database writes must be
+atomic.
 
-### Resource Configuration Options
+## Configuration reference
 
-Pass a `ResourceEngineOptions` object to customize the router behavior:
+| Option | Type | Default | What it controls |
+| --- | --- | --- | --- |
+| `primaryKey` | `string` | `'id'` | Column used for detail, update, and delete routes. |
+| `allowedFields` | `string[]` | `undefined` | Columns accepted for projection, sorting, exact filters, and request payloads. |
+| `readOnlyFields` | `string[]` | `[primaryKey, 'created_at']` | Request fields removed before create and update. |
+| `hiddenFields` | `string[]` | `['password', 'password_hash', 'hash', 'secret']` | Properties removed from returned records. |
+| `searchableFields` | `string[]` | `[]` | Columns searched when `?search=` is present. |
+| `defaultLimit` | `number` | `20` | Page size when the request has no valid positive limit. |
+| `maxLimit` | `number` | `100` | Upper bound for the page size. |
+| `defaultSort` | `string` | `${primaryKey}:asc` | Sort used when the request does not supply `sort`. |
+| `auth` | `boolean \| ExpressAuthOptions \| RequestHandler` | `undefined` | JWT or custom authentication middleware applied to all routes. |
+| `requireRoles` | `string[]` | `undefined` | Allowed `req.user.role` values; requires a user to be set. |
+| `hooks` | `ResourceHooks` | `{}` | Optional lifecycle callbacks for writes. |
 
-| Option | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `primaryKey` | `string` | `'id'` | Primary key column name of the underlying table. |
-| `allowedFields` | `string[]` | `undefined` | Strict whitelist of column names permitted for selection, filtering, and sorting. |
-| `readOnlyFields` | `string[]` | `['id', 'created_at']` | Fields stripped from incoming client payloads on `POST`, `PUT`, and `PATCH`. |
-| `hiddenFields` | `string[]` | `['password', 'password_hash', 'hash', 'secret']` | Sensitive fields omitted from all JSON responses. |
-| `searchableFields` | `string[]` | `[]` | Columns targeted when clients supply the `?search=term` query parameter. |
-| `defaultLimit` | `number` | `20` | Default number of records returned per page when `limit` is omitted. |
-| `maxLimit` | `number` | `100` | Hard upper ceiling for `limit` to prevent denial-of-service queries. |
-| `defaultSort` | `string` | `${primaryKey}:asc` | Fallback sort clause if client omits `?sort=`. |
-| `auth` | `boolean \| ExpressAuthOptions \| RequestHandler` | `undefined` | Enforces authentication. If `true`, requires valid JWT via `JWT_SECRET` / `JWT_ACCESS_SECRET`. |
-| `requireRoles` | `string[]` | `undefined` | Enforces RBAC permissions (checks `req.user.role`). |
-| `hooks` | `ResourceHooks` | `{}` | Lifecycle interceptors (`beforeCreate`, `afterCreate`, etc.). |
-
----
+For joins, multi-table writes, custom filtering, and stronger request validation,
+use your own Express route and call the regular database API. The router is
+intentionally limited to one table.
