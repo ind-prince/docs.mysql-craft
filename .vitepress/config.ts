@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   title: "mysql-craft \u26a1",
-  description: "The modern, high-velocity MySQL engine for Node.js & TypeScript.",
+  description: "Documentation for mysql-craft, a MySQL client library for Node.js and TypeScript.",
   base: '/docs.mysql-craft/',
   appearance: true,
   themeConfig: {
@@ -10,14 +10,16 @@ export default defineConfig({
     nav: [
       { text: 'Guide', link: '/why-mysql-craft' },
       { text: 'API Reference', link: '/api-reference' },
+      { text: 'Migration', link: '/migration' },
     ],
     sidebar: [
       {
         text: 'Getting Started',
         items: [
-          { text: 'Why @mysql-craft?', link: '/why-mysql-craft' },
+          { text: 'Why mysql-craft?', link: '/why-mysql-craft' },
           { text: 'Installation', link: '/installation' },
           { text: 'Quick Start', link: '/quick-start' },
+          { text: "What's new & migration", link: '/migration' },
         ],
       },
       {

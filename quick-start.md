@@ -1,121 +1,154 @@
-## 🚀 Quick Start Guide
+# Quick start
 
-### 1. Initialize the Database Client
+This guide uses an imaginary shop database with an `orders` table. The first
+example is deliberately small; the later examples show how to apply the same
+client to everyday application work.
 
-Create a centralized database instance using `createDbClient`:
+## Create a client and fetch a record
+
+`createDbClient()` creates a pool synchronously. It accepts mysql2 pool options
+along with `mysql-craft` settings such as `debug` and `retryPolicy`.
 
 ```typescript
-// src/config/database.ts
 import { createDbClient } from 'mysql-craft';
 
 export const db = createDbClient({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || 'secret',
-  database: process.env.DB_NAME || 'ecommerce_db',
-  connectionLimit: 15, // Max 15 active pool connections
-  debug: process.env.NODE_ENV !== 'production' // Colorized terminal logs in development
+  host: process.env.DB_HOST ?? 'localhost',
+  user: process.env.DB_USER ?? 'shop_app',
+  password: process.env.DB_PASSWORD ?? '',
+  database: process.env.DB_NAME ?? 'shop',
+  connectionLimit: 10
 });
 ```
 
-### 2. Execute Type-Safe Queries
+Use a generic to describe the fields your query selects. The generic is a
+TypeScript type; it does not inspect the database schema at runtime.
 
 ```typescript
-// src/services/userService.ts
-import { db } from '../config/database';
-
-interface User {
-  iduser: number;
-  email: string;
-  first_name: string;
-  role: 'user' | 'admin';
-  created_at: Date;
+interface OrderSummary {
+  id: number;
+  customer_id: number;
+  status: 'pending' | 'paid' | 'shipped';
+  total_cents: number;
 }
 
-// Fetch a single record (returns User or null)
-const user = await db.queryOne<User>(
-  'SELECT iduser, email, first_name, role, created_at FROM account WHERE email = ? LIMIT 1',
-  ['alex@company.com']
+const order = await db.queryOne<OrderSummary>(
+  'SELECT id, customer_id, status, total_cents FROM orders WHERE id = ? LIMIT 1',
+  [1042]
 );
 
-// Fetch a typed array of records
-const admins = await db.query<User>(
-  'SELECT * FROM account WHERE role = ? ORDER BY created_at DESC',
-  ['admin']
+if (order === null) {
+  console.log('Order 1042 was not found.');
+} else {
+  console.log(`Order ${order.id}: ${order.status}`);
+}
+```
+
+`query()` returns an array. `queryOne()` returns the first row or `null`, so
+check for the missing-row case before reading its fields.
+
+## Create a row with a transaction
+
+Use the client helpers to bind values and escape table and column identifiers.
+The transaction callback receives a scoped client, `trx`; run every query that
+belongs to the transaction through that client.
+
+```typescript
+const createdOrder = await db.transaction(async (trx) => {
+  const inserted = await trx.insert('orders', {
+    customer_id: 42,
+    status: 'pending',
+    total_cents: 12_500
+  });
+
+  await trx.insert('order_events', {
+    order_id: inserted.insertId,
+    event_type: 'created'
+  });
+
+  return trx.queryOne<OrderSummary>(
+    'SELECT id, customer_id, status, total_cents FROM orders WHERE id = ?',
+    [inserted.insertId]
+  );
+});
+
+console.log(createdOrder);
+```
+
+The transaction commits when the callback resolves and rolls back if it throws.
+Deadlock retries can rerun the callback, so avoid placing non-repeatable
+side-effects such as sending email inside it. See [transactions](/api-reference#transactions).
+
+## Use a structured query for a paginated list
+
+For filters built from application state, `select()` and `count()` keep values
+bound without hand-building the SQL:
+
+```typescript
+const recentOrders = await db.select<OrderSummary>({
+  table: 'orders',
+  fields: ['id', 'customer_id', 'status', 'total_cents'],
+  where: [
+    { column: 'status', operator: 'IN', value: ['paid', 'shipped'] },
+    { column: 'total_cents', operator: '>=', value: 5_000 }
+  ],
+  orderBy: [{ column: 'id', direction: 'DESC' }],
+  limit: 20,
+  offset: 0
+});
+
+const matchingOrders = await db.count({
+  table: 'orders',
+  where: { status: 'paid' }
+});
+```
+
+Structured helpers cover one table at a time. Use `query()` when you need a join,
+aggregation, or SQL feature the helpers do not model:
+
+```typescript
+const orderRows = await db.query<{
+  id: number;
+  customer_email: string;
+  total_cents: number;
+}>(
+  `SELECT o.id, c.email AS customer_email, o.total_cents
+   FROM orders AS o
+   INNER JOIN customers AS c ON c.id = o.customer_id
+   WHERE o.status = ?
+   ORDER BY o.id DESC
+   LIMIT ?`,
+  ['paid', 20]
 );
 ```
 
-### 3. Build a Production Express Controller
+Keep user input in the parameter array. Do not interpolate it into SQL strings.
+
+## Handle database errors and close the pool
+
+Database operations can reject with exported error classes. Catch errors at an
+application boundary where you can decide whether to retry, report, or return
+an HTTP response. `close()` ends the underlying mysql2 pool:
 
 ```typescript
-// src/controllers/AccountController.ts
-import type { Request, Response, NextFunction } from 'express';
-import { db } from '../config/database';
-import { Security, ValidationError, AuthError } from 'mysql-craft';
+import { DatabaseError, PoolExhaustedError } from 'mysql-craft';
 
-export class AccountController {
-  // Safe, transactional registration
-  public static async register(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      const { email, password, firstName, lastName } = req.body;
-
-      if (!email || !password || !firstName || !lastName) {
-        throw new ValidationError('All fields are required.');
-      }
-
-      // Check for duplicate account
-      const existing = await db.queryOne(
-        'SELECT iduser FROM account WHERE email = ? LIMIT 1',
-        [email]
-      );
-      if (existing) {
-        throw new ValidationError('An account with this email address already exists.');
-      }
-
-      // Hash password using cost factor 12
-      const passwordHash = await Security.hashPassword(password);
-
-      // Execute transaction with automatic rollback and deadlock recovery
-      const createdUser = await db.transaction(async (trx) => {
-        const result = await trx.insert('account', {
-          email,
-          first_name: firstName,
-          last_name: lastName,
-          password_hash: passwordHash,
-          role: 'user'
-        });
-
-        // Initialize user profile record in the same atomic transaction
-        await trx.insert('account_profile', {
-          iduser: result.insertId,
-          bio: 'Welcome to my profile!'
-        });
-
-        return trx.queryOne('SELECT * FROM account WHERE iduser = ?', [result.insertId]);
-      });
-
-      // Generate Access & Refresh tokens
-      const tokens = Security.generateTokenPair(
-        { sub: createdUser.iduser, email: createdUser.email, role: createdUser.role },
-        { sub: createdUser.iduser },
-        {
-          accessSecret: process.env.JWT_ACCESS_SECRET!,
-          refreshSecret: process.env.JWT_REFRESH_SECRET!
-        }
-      );
-
-      res.status(201).json({
-        success: true,
-        data: {
-          user: Security.sanitizeUser(createdUser),
-          tokens
-        }
-      });
-    } catch (err) {
-      next(err);
-    }
+try {
+  const results = await db.query('SELECT id FROM orders WHERE customer_id = ?', [42]);
+  console.log(`Found ${results.length} orders.`);
+} catch (error) {
+  if (error instanceof PoolExhaustedError) {
+    console.error('The database pool is full; ask the caller to retry later.');
+  } else if (error instanceof DatabaseError) {
+    console.error(`Database operation failed (${error.code}).`);
+  } else {
+    throw error;
   }
+} finally {
+  await db.close();
 }
 ```
 
----
+In a long-running server, close the pool during application shutdown rather
+than after each request. The [resilience guide](/resilience-apm) covers draining,
+health checks, pool limits, and instrumentation.
