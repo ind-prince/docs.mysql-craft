@@ -1,160 +1,243 @@
-## Contents
+# Advanced configuration
 
-- [Atomic Transactions with Deadlock Retries](#transactions)
-- [Express Middleware Suite](#express-middleware)
-- [Error Hierarchy & HTTP Status Mapping](#error-hierarchy)
-- [TypeScript Integration & Type Safety](#typescript-integration)
-- [Package Subpath Exports](#package-exports)
-- [Configuration Reference](#configuration-reference)
-- [Contributing & Development](#contributing)
-- [License](#license)
+`DatabaseConfig` extends `mysql2/promise`'s `PoolOptions`. It also accepts
+settings used by `mysql-craft` for logging, retries, instrumentation, and AWS
+TLS. Client-specific settings are removed before the remaining options are
+passed to mysql2.
 
----
+## Database configuration
 
-<a id="transactions"></a>
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `host` | `string` | mysql2 default (`'localhost'`) | MySQL server host. |
+| `port` | `number` | mysql2 default (`3306`) | MySQL server port. |
+| `user` | `string` | mysql2 default (`'root'`) | Database account. |
+| `password` | `string` | mysql2 default (`''`) | Database password. |
+| `database` | `string` | mysql2 default | Initial database. |
+| `connectionLimit` | `number` | `10` | Maximum connection count in the pool. |
+| `queueLimit` | `number` | `connectionLimit * 10` | Maximum number of queued pool requests. |
+| `waitForConnections` | `boolean` | `true` | Whether mysql2 queues requests while all connections are busy. |
+| `maxIdle` | `number` | `connectionLimit` | Maximum idle connections. |
+| `idleTimeout` | `number` | `60000` | mysql2 idle connection timeout in milliseconds. |
+| `enableKeepAlive` | `boolean` | `true` | Enables TCP keep-alive. |
+| `keepAliveInitialDelay` | `number` | `0` | Initial keep-alive delay in milliseconds. |
+| `debug` | `boolean \| LoggerConfig` | `false` | Enables the terminal logger. An object can configure its threshold, SQL length, masking, and extra sensitive keys. |
+| `slowQueryThresholdMs` | `number` | `500` | Logger threshold for marking a query slow. |
+| `retryPolicy` | `RetryPolicyOptions` | See retry section | Retry settings for query calls. |
+| `retryAttempts` | `number` | `3` | Compatibility alias for `retryPolicy.maxAttempts`. |
+| `retryDelayMs` | `number` | `200` | Compatibility alias for `retryPolicy.baseDelayMs`. |
+| `sensitiveKeys` | `string[]` | `[]` | Additional exact property names to mask in terminal logs. |
+| `instrumentation` | `Instrumentation \| Instrumentation[]` | `undefined` | Listener or listeners for query, error, retry, and transaction events. |
+| `useAwsRds` | `boolean` | `false` | With `Database.create()`, loads the AWS RDS TLS profile from optional `aws-ssl-profiles`. |
 
-## 🔄 Atomic Transactions with Deadlock Retries
-
-In high-concurrency environments, competing transactions accessing intersecting rows cause MySQL deadlocks (`ER_LOCK_DEADLOCK`, errno `1213` or `1205`). 
-
-`@mysql-craft` handles transactions safely:
-1. Acquires a dedicated `PoolConnection` from the pool.
-2. Issues `START TRANSACTION`.
-3. Passes a scoped `Transaction` client to your callback function.
-4. Automatically invokes `COMMIT` upon successful resolution.
-5. Catches errors, invokes `ROLLBACK`, and releases the connection back to the pool.
-6. **Automatic Deadlock Retry:** If a deadlock or lock wait timeout occurs, rolls back and retries the entire callback block using exponential backoff with full jitter up to the configured retry limit.
+The mysql2 options not listed here can be passed through too, including `ssl`
+and `timezone`. The explicit values above are the defaults assigned by
+`Database`; mysql2 may supply defaults for other pool options.
 
 ```typescript
-// Safe financial transfer with deadlock retry guarantees
-await db.transaction(async (trx) => {
-  const senderId = 101;
-  const recipientId = 202;
-  const transferAmount = 250.00;
+import { createDbClient } from 'mysql-craft';
 
-  // 1. Check sender balance inside transaction
-  const sender = await trx.queryOne<{ balance: number }>(
-    'SELECT balance FROM account_balance WHERE iduser = ? FOR UPDATE',
-    [senderId]
-  );
-
-  if (!sender || sender.balance < transferAmount) {
-    throw new ValidationError('Insufficient funds for transfer.');
+const db = createDbClient({
+  host: process.env.DB_HOST ?? 'localhost',
+  user: process.env.DB_USER ?? 'shop_app',
+  password: process.env.DB_PASSWORD ?? '',
+  database: 'shop',
+  connectionLimit: 12,
+  queueLimit: 60,
+  ssl: { rejectUnauthorized: true },
+  debug: {
+    slowThresholdMs: 400,
+    maxSqlLength: 800,
+    maskSensitive: true,
+    sensitiveKeys: ['customer_email']
+  },
+  retryPolicy: {
+    maxAttempts: 3,
+    baseDelayMs: 200,
+    maxDelayMs: 3000
   }
-
-  // 2. Deduct from sender
-  await trx.update(
-    'account_balance',
-    { balance: sender.balance - transferAmount },
-    'iduser = ?',
-    [senderId]
-  );
-
-  // 3. Credit recipient
-  await trx.query(
-    'UPDATE account_balance SET balance = balance + ? WHERE iduser = ?',
-    [transferAmount, recipientId]
-  );
-
-  // 4. Record audit ledger entry
-  await trx.insert('transfer_ledger', {
-    from_user: senderId,
-    to_user: recipientId,
-    amount: transferAmount,
-    status: 'COMPLETED'
-  });
-}, {
-  retries: 3,        // Retry up to 3 times on deadlock
-  retryDelayMs: 200  // Base backoff delay
 });
 ```
 
----
+`queueLimit` is a waiting-request bound, not an additional connection count.
+When the pool queue is exhausted, recognized pool saturation errors become
+`PoolExhaustedError`. The library does not automatically turn every thrown
+error into an HTTP response; an Express application can use `errorMiddleware`
+to map this operational error to its 503 status.
 
-<a id="express-middleware"></a>
+### Retry policy
 
-## 🔌 Express Middleware Suite
+`RetryPolicyOptions` contains:
 
-Imported from `mysql-craft/middleware` or root:
+| Property | Type | Default | Description |
+| --- | --- | --- | --- |
+| `maxAttempts` | `number` | `3` | Number of retry attempts after the initial query execution. |
+| `baseDelayMs` | `number` | `200` | Starting backoff bound. |
+| `maxDelayMs` | `number` | `3000` | Maximum backoff bound for query retries. |
+| `jitter` | `boolean` | `true` | Present in the type, but the current implementation always uses full jitter. |
+
+Each retry delay is a random value between zero and the lesser of the
+exponential delay and `maxDelayMs`. `maxAttempts: 3` permits up to three
+retries, or four total executions.
+
+Deadlocks (`ER_LOCK_DEADLOCK` / `1213`) and lock wait timeouts
+(`ER_LOCK_WAIT_TIMEOUT` / `1205`) can be retried. Transient network errors are
+retried for reads, and for writes only if the call uses
+`{ idempotent: true }`. Only opt into write retries when the operation is safe
+to repeat.
+
+The legacy `retryAttempts` and `retryDelayMs` settings remain supported. A
+value in `retryPolicy` takes precedence over the corresponding alias.
+
+### AWS RDS SSL
+
+The synchronous constructor and factory do not load the AWS profile. Use the
+async static factory:
 
 ```typescript
-import {
-  authenticateJwt,
-  requireRole,
-  validateBody,
-  errorMiddleware
-} from 'mysql-craft';
+import { Database } from 'mysql-craft';
+
+const db = await Database.create({
+  host: process.env.DB_HOST!,
+  user: process.env.DB_USER!,
+  password: process.env.DB_PASSWORD!,
+  database: 'shop',
+  useAwsRds: true
+});
 ```
 
-### 1. JWT Authentication Middleware
+`aws-ssl-profiles` must be installed in the application when this option is
+enabled. The package is optional for all other users. For custom TLS settings,
+pass mysql2's `ssl` option directly and leave `useAwsRds` disabled.
 
-Validates the `Authorization: Bearer <token>` header, decodes the payload, and augments `req.user`:
+## Transactions and atomic work
+
+Transactions use a dedicated pool connection. `Database.transaction(callback,
+options?)` starts a transaction, supplies a `Transaction` client, commits when
+the callback succeeds, and rolls back when it throws. The transaction client
+inherits the normal query, mutation, and pagination helpers.
 
 ```typescript
-// Protect a route
+await db.transaction(async (trx) => {
+  const inventory = await trx.queryOne<{ available: number }>(
+    'SELECT available FROM inventory WHERE product_id = ? FOR UPDATE',
+    [7]
+  );
+
+  if (!inventory || inventory.available < 2) {
+    throw new Error('This product is no longer available in that quantity.');
+  }
+
+  await trx.update(
+    'inventory',
+    { available: inventory.available - 2 },
+    '`product_id` = ?',
+    [7]
+  );
+  await trx.insert('order_items', {
+    order_id: 1042,
+    product_id: 7,
+    quantity: 2
+  });
+});
+```
+
+Transaction options are `retries` (default `3`) and `retryDelayMs` (default
+`200`). These allow three full retries after the initial attempt on deadlock or
+lock-wait timeout; the whole callback runs again. Keep email, payment-provider,
+and other external side effects outside the callback or make them repeat-safe.
+
+## Express middleware
+
+Install Express separately before using these exports.
+
+### JWT authentication
+
+`authenticateJwt({ secret, optional?, tokenExtractor? })` validates a bearer
+token and sets `req.user`. A custom extractor can read a token from another
+location. `optional: true` allows requests without a token and continues even
+when token verification throws, so use it only when that behavior is intended.
+
+```typescript
+import express from 'express';
+import { authenticateJwt } from 'mysql-craft/middleware';
+
+const app = express();
 app.get(
   '/api/me',
   authenticateJwt({ secret: process.env.JWT_ACCESS_SECRET! }),
   (req, res) => {
-    // req.user is automatically typed and available
-    res.json({ userId: req.user?.sub, role: req.user?.role });
+    res.json({ id: req.user?.sub, role: req.user?.role });
   }
 );
-
-// Optional authentication (proceeds with req.user = undefined if no token provided)
-app.get(
-  '/api/posts',
-  authenticateJwt({ secret: process.env.JWT_ACCESS_SECRET!, optional: true }),
-  postsHandler
-);
 ```
 
-### 2. Role-Based Access Control (RBAC)
+### Role checks
 
-Guarantees the authenticated user possesses one of the allowed roles:
+`requireRole(...allowedRoles)` returns middleware that requires `req.user` and
+allows the request only when its `role` matches one of the supplied values.
+Mount authentication before role checks:
 
 ```typescript
-// Require admin or superadmin role
+import { authenticateJwt, requireRole } from 'mysql-craft/middleware';
+
 app.delete(
-  '/api/accounts/:id',
+  '/api/customers/:id',
   authenticateJwt({ secret: process.env.JWT_ACCESS_SECRET! }),
-  requireRole('admin', 'superadmin'),
-  deleteAccountHandler
+  requireRole('admin', 'support'),
+  deleteCustomerHandler
 );
 ```
 
-### 3. Request Body Validation
+Without an authenticated user, `requireRole` forwards an unauthorized
+`AuthError`. A logged-in user with no matching role receives a forbidden error.
 
-Lightweight, framework-agnostic validator compatible with custom functions, Zod, Joi, or Yup:
+### Request body validation
+
+`validateBody(validator)` calls your validator with `req.body`. Return
+`{ valid: false, errors }` to forward a `ValidationError`; otherwise call
+`next()`.
 
 ```typescript
+import { validateBody } from 'mysql-craft/middleware';
+
 app.post(
-  '/api/accounts',
-  validateBody((body: any) => {
+  '/api/orders',
+  validateBody((body) => {
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      return { valid: false, errors: ['Expected an order object.'] };
+    }
+
+    const order = body as Record<string, unknown>;
     const errors: Record<string, string> = {};
-    if (!body.email) errors.email = 'Email address is required.';
-    if (!body.password) errors.password = 'Password is required.';
-    return {
-      valid: Object.keys(errors).length === 0,
-      errors
-    };
+    if (typeof order.customer_id !== 'number') {
+      errors.customer_id = 'Choose a customer.';
+    }
+    if (typeof order.total_cents !== 'number' || order.total_cents < 0) {
+      errors.total_cents = 'Enter a non-negative amount in cents.';
+    }
+    return { valid: Object.keys(errors).length === 0, errors };
   }),
-  createAccountHandler
+  createOrderHandler
 );
 ```
 
-### 4. Centralized Error Middleware
+The validator can call a schema library such as Zod, Joi, or Yup, but this
+middleware does not depend on those packages or convert their result formats
+automatically.
 
-Standardizes all application errors into a predictable JSON API structure:
+### Central error handling
+
+Place `errorMiddleware` after routes and other middleware:
 
 ```typescript
-import { errorMiddleware } from 'mysql-craft';
+import { errorMiddleware } from 'mysql-craft/middleware';
 
-// Register at the end of your Express middleware stack
 app.use(errorMiddleware);
 ```
 
-Standardized JSON output:
+For library `AppError` instances it returns:
+
 ```json
 {
   "success": false,
@@ -163,177 +246,73 @@ Standardized JSON output:
     "code": "VALIDATION_ERROR",
     "message": "Request payload validation failed.",
     "details": {
-      "email": "Email address is required."
+      "email": "Enter a valid email address."
     }
   }
 }
 ```
 
----
+The HTTP status comes from the error's `statusCode`. Unknown errors are logged
+with `console.error` and returned as HTTP 500. In production, the response
+message is the generic `An unexpected error occurred.`; outside production it
+uses the original error message.
 
-<a id="error-hierarchy"></a>
+## Package exports
 
-## 🚨 Error Hierarchy & HTTP Status Mapping
+These are the supported package entry points. Type declarations are published
+for each entry point.
 
-All errors inherit from the abstract `AppError` class and feature `isOperational: true`, allowing centralized error handlers to distinguish trusted operational errors from unknown programming bugs.
-
-```
-AppError (abstract)
- ├── DatabaseError (HTTP 500)
- ├── PoolExhaustedError (HTTP 503)
- ├── AuthError (HTTP 401 / 403)
- └── ValidationError (HTTP 400)
-```
-
-| Error Class | HTTP Status | Code | Description |
-| :--- | :---: | :--- | :--- |
-| `DatabaseError` | `500` | `DATABASE_ERROR` | Database query failure (contains `sql`, `errno`, `sqlState`). |
-| `PoolExhaustedError` | `503` | `POOL_EXHAUSTED` | Connection pool queue limit reached. Server is saturated. |
-| `AuthError.unauthorized` | `401` | `UNAUTHORIZED` | Missing or invalid authentication token. |
-| `AuthError.invalidToken` | `401` | `INVALID_TOKEN` | Token corrupted or malformed signature. |
-| `AuthError.tokenExpired` | `401` | `TOKEN_EXPIRED` | JWT has expired. |
-| `AuthError.forbidden` | `403` | `FORBIDDEN` | Authenticated user lacks required RBAC permissions. |
-| `AuthError.invalidCredentials`| `401` | `INVALID_CREDENTIALS` | Invalid email/username or password. |
-| `ValidationError` | `400` | `VALIDATION_ERROR` | Request payload or parameter validation failure. |
-
----
-
-<a id="typescript-integration"></a>
-
-## 🦾 TypeScript Integration & Type Safety
-
-### End-to-End Type Safety with Generics
+| Import | Main exports |
+| --- | --- |
+| `mysql-craft` | Database, query helpers, security, errors, middleware, encoding, and SSL helpers. |
+| `mysql-craft/core` | Database and transaction clients, query builders, instrumentation, and native helpers. |
+| `mysql-craft/security` | `Security` and JWT payload/token types. |
+| `mysql-craft/middleware` | Express authentication, role, validation, and error middleware. |
+| `mysql-craft/errors` | `AppError`, `DatabaseError`, `PoolExhaustedError`, `AuthError`, and `ValidationError`. |
 
 ```typescript
-interface Order {
-  idorder: number;
-  customer_id: number;
-  total_amount: number;
-  created_at: Date;
-}
-
-// 1. Typed queryOne returns Order | null
-const order = await db.queryOne<Order>(
-  'SELECT * FROM orders WHERE idorder = ?',
-  [1001]
-);
-
-// 2. Typed query returns Order[]
-const orders = await db.query<Order>(
-  'SELECT * FROM orders WHERE customer_id = ?',
-  [42]
-);
-
-// 3. Typed structured select
-const topOrders = await db.select<Order>({
-  table: 'orders',
-  where: [{ column: 'total_amount', operator: '>', value: 500 }]
-});
-```
-
-### Request User Type Augmentation
-
-`@mysql-craft` automatically extends the Express `Request` interface:
-
-```typescript
-// Express Request interface is globally merged:
-declare global {
-  namespace Express {
-    interface Request {
-      user?: BaseTokenPayload & Record<string, any>;
-    }
-  }
-}
-```
-
----
-
-<a id="package-exports"></a>
-
-## 📦 Package Subpath Exports
-
-Import only the modules you need with clean subpath imports:
-
-```typescript
-// Root import (everything)
 import { createDbClient, Security } from 'mysql-craft';
-
-// Core database client & query builders
-import { Database, BaseClient, escapeIdentifier } from 'mysql-craft/core';
-
-// Security & auth module
-import { Security } from 'mysql-craft/security';
-
-// Express middleware
-import { authenticateJwt, requireRole, errorMiddleware } from 'mysql-craft/middleware';
-
-// Operational errors
-import { DatabaseError, PoolExhaustedError, ValidationError, AuthError } from 'mysql-craft/errors';
+import { Database, buildSelectQuery } from 'mysql-craft/core';
+import { authenticateJwt } from 'mysql-craft/middleware';
+import { DatabaseError } from 'mysql-craft/errors';
 ```
 
----
+## TypeScript and API errors
 
-<a id="configuration-reference"></a>
+The package ships declaration files generated by its build. Generics such as
+`db.query<OrderRow>()` and `db.select<OrderRow>()` type the returned values but
+do not validate database data.
 
-## ⚙️ Configuration Reference
+The Express request declaration adds optional
+`req.user: BaseTokenPayload & Record<string, any>`. The token payload includes a
+required `sub: string | number` and optional `email` and `role`.
 
-### `DatabaseConfig` (extends `mysql2.PoolOptions`)
+All exported application errors inherit from `AppError`:
 
-| Option | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `host` | `string` | `'localhost'` | MySQL server hostname. |
-| `port` | `number` | `3306` | MySQL server port. |
-| `user` | `string` | `'root'` | Database username. |
-| `password` | `string` | `''` | Database password. |
-| `database` | `string` | `undefined` | Database name. |
-| `connectionLimit` | `number` | `10` | Maximum number of active connections in pool. |
-| `queueLimit` | `number` | `connectionLimit * 10` | Maximum queued requests before failing fast with HTTP 503. |
-| `waitForConnections` | `boolean` | `true` | Whether to queue requests when pool is saturated. |
-| `debug` | `boolean \| LoggerConfig` | `false` | Enables terminal SQL diagnostics with syntax highlighting. |
-| `slowQueryThresholdMs` | `number` | `500` | Latency threshold (in ms) before tagging query as slow. |
-| `retryPolicy` | `RetryPolicyOptions` | `{ maxAttempts: 3, baseDelayMs: 200 }` | Exponential backoff retry policy for transient errors and deadlocks. |
-| `sensitiveKeys` | `string[]` | `[]` | Additional parameter keys to mask in debug logs. |
-| `instrumentation` | `Instrumentation \| Instrumentation[]` | `[]` | APM and logging event listeners. |
+| Error | Status | Default code / behavior |
+| --- | --- | --- |
+| `DatabaseError` | `500` | Uses the mysql2 error code when supplied; otherwise `DATABASE_ERROR`. Includes optional SQL metadata. |
+| `PoolExhaustedError` | `503` | `POOL_EXHAUSTED`; default message says the pool is exhausted and the server cannot handle the request. |
+| `AuthError` | `401` or `403` | Static constructors include `unauthorized`, `invalidToken`, `tokenExpired`, `forbidden`, and `invalidCredentials`. |
+| `ValidationError` | `400` | `VALIDATION_ERROR`; optional validation details are available through `details`. |
 
----
+`DatabaseError` wraps query failures and failed transactions. Transaction
+failures that are not already `DatabaseError` use a message beginning
+`Transaction failed:` and default to code `TRANSACTION_FAILED` when the
+underlying error has no code. Empty insert/update-builder inputs also raise
+`DatabaseError`. Invalid SQL identifiers raise `ValidationError`.
 
-<a id="contributing"></a>
+## Development and license
 
-## 🧪 Contributing & Development
+The library repository uses:
 
-Contributions are welcome! Please follow these steps:
+```bash
+npm install
+npm run typecheck
+npm test
+npm run build
+```
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/arch/mysql-craft.git
-   cd mysql-craft
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Run unit & integration tests:**
-   ```bash
-   npm test
-   ```
-
-4. **Verify TypeScript compilation:**
-   ```bash
-   npm run typecheck
-   npm run build
-   ```
-
----
-
-<a id="license"></a>
-
-## 📜 License
-
-Distributed under the **MIT License**. See [`LICENSE`](/advanced-configuration#license) for details.
-
-<!-- Developed with ❤️ by the **Principal Node.js Architecture Team**. -->
-<p align="center">
-  Crafted with ❤️ by <a href="https://github.com/ind-prince">ind-prince</a>
-</p>
+The package is published under the MIT License. See the
+[library repository](https://github.com/ind-prince/mysql-craft) for the license
+file and development history.
